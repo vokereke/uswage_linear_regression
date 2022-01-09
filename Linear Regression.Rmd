@@ -1,0 +1,199 @@
+---
+title: 'Linear Regression'
+author: 'Victoria Okereke'
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#importing libraries
+library(faraway)
+library(visdat)
+library(olsrr)
+library(lmtest)
+library(caret)
+library(kernlab)
+library(ipred)
+#setting seed
+set.seed(123)
+```
+Aim: To predict wage from the usawage dataset in the faraway library
+
+Data Exploration
+```{r}
+#reading in dataset
+data("uswages")
+#viewing data structure
+str(uswages)
+#viewing first 6 rows of data
+head(uswages)
+#viewing the pattern of missingness
+vis_miss(uswages)
+```
+
+No missing data so we do not need to worry about missingness.
+
+A careful review of the data shows that columns ne, mw, so, and we seem to have been coded from the same categorical variable so we will drop one of them from the model
+
+```{r}
+#dropping the 'we' variable
+uswages_reduced = uswages[-c(9)]
+#fitting the linear regression model
+uswages_reg = lm(wage ~., data = uswages_reduced)
+#getting a summary statistics
+summary(uswages_reg)
+```
+
+Some variables are not significant. Let's use a variable selection method to retain only significant variables in the model
+
+```{r}
+#performing a stepwise both ways variable selection
+kstep_both = ols_step_both_p(uswages_reg,pent=0.1,prem=0.05)#,details = TRUE)
+kstep_both
+#fitting the selected model
+uswages_reg_final = lm(wage~ educ + exper + pt + smsa + race,data = uswages_reduced)
+summary(uswages_reg_final)
+```
+
+From the summary statistics above, we see that all variables in the model are now significant. We also notice a low R-squared value of 0.1977 and Adjusted R-squared of 0.1957
+
+Regression function:
+
+yhat = -243.4879 + 48.6616(educ) + 9.0798(exper) - 336.9503(pt) +  115.5466(smsa) - 124.9292(race)
+
+
+Now let's check to see if all the linear regression assumptions are met.
+
+Checking for Multicollinearity
+```{r}
+vif(uswages_reg_final)
+```
+
+All VIFs are below 10. There is no multicolinearity in the data
+
+Checking for normality assumption
+```{r}
+#Obtaining the standardized residuals
+stdres = rstandard(uswages_reg_final)
+#Normal probability plot of the standardized residuals
+qqnorm(stdres)
+qqline(stdres)
+
+```
+
+The QQ plot above shows a heavy upper tail. Which means that the model could be violating the normality assumption. Let's confirm through the Shapiro-Wilk test
+
+```{r}
+shapiro.test(uswages_reg_final$residuals)
+```
+
+Ho: residuals are normally distributed
+
+Ha: residuals are not normally distributed
+
+The p-value < 2.2e-16, which signifies that we should reject the null hypothesis and conclude that the residuals are not normally distributed. This confirms that the model failed the normality assumption
+
+Let's check for constant variance 
+
+```{r}
+#obtaining the residual
+ei = uswages_reg_final$residuals
+Y_hat = uswages_reg_final$fitted.values
+#scatter plot of the residuals against fitted values Y
+plot(Y_hat,ei,main = "Residuals vs. Fitted Values Y", 
+     xlab = "Fitted Values Y",ylab = "Residuals")
+```
+
+The plot above shows that the error term is not constant. We also notice some outliers. The plot also shows that the relationship is linear
+
+```{r}
+#conducting Brausch-Pagan test to confirm
+bptest(uswages_reg_final, studentize = FALSE)
+```
+
+Ho: Error variance is constant
+
+Ha: Error variance is not constant
+
+From the results above, we see that the p-value (< 2.2e-16) is significant (i.e. less than 0.05). So we reject the null hypothesis and conclude that error variance is not constant. Therefore the model also violates the constant variance assumption.
+
+Let's investigate the outliers
+```{r}
+#Checking for outliers
+ols_plot_resid_stud_fit(uswages_reg_final)
+ols_plot_resid_stud(uswages_reg_final)
+```
+From the plots above, we notice a lot of outlying observations.
+
+Let's try to improve the R-square of our model by transforming the data. To determine type of transformatio needed, we use Box-Cox
+
+```{r}
+library(MASS)
+par(mfrow=c(1,1))
+
+boxcox(uswages_reg_final,lambda=seq(-1,1,by=.1))
+```
+
+The Box Cox suggest lambda close to zero, which means a log transformation of the outcome variable.
+
+```{r}
+#fitting the model with a log-scale of the response variable
+uswages_reg_trans = lm(log(wage) ~., data = uswages_reduced)
+#performing a stepwise both ways variable selection
+kstep_both_trans = ols_step_both_p(uswages_reg_trans,pent=0.1,prem=0.05)#,details = TRUE)
+kstep_both_trans
+#refitting the selected model
+uswages_reg_trans_final = lm(log(wage)~ educ + exper + pt + smsa + race,data = uswages_reduced)
+summary(uswages_reg_trans_final)
+```
+
+Regression function:
+
+log(yhat) = 4.725711 + 0.086566(educ) + 0.016037(exper) - 1.098583(pt) +  0.174543(smsa) - 0.211327(race)
+
+
+Comparing the output from the transformed and untransformed model, we see that after transforming the response variable, Adjusted R-squared increased greatly from 0.1957 to 0.3827. We also see from the plot of fitted values vs residuals below that the plot looks more random compared to the previous plot from the untransformed model.
+
+```{r}
+plot(uswages_reg_trans_final$fitted.values,uswages_reg_trans_final$residuals)
+```
+
+Note that we could check to see if the outliers are still present, we could fit a robust regression model since it is robust to outliers (robust regression methods to consider are huber and bi-square regression)
+
+Finally, from our regression function, we can make predictions. For instance, what would be the expected wage of an individual who has 15 educ, 30 exper, pt 0, smsa 1, and race 1.
+
+From our regression function:
+
+log(yhat) = 4.725711 + 0.086566(educ) + 0.016037(exper) - 1.098583(pt) +  0.174543(smsa) - 0.211327(race)
+```{r}
+yhat = exp(4.725711 + (0.086566*15) + (0.016037*30) - (1.098583*0) +  (0.174543*1) - (0.211327*1))
+print(yhat)
+```
+
+Our model predicts a wage of 644.5336
+
+Let's use the predict function in R
+```{r}
+#create a dataframe with the new observation
+data = data.frame(educ=15,exper=30,pt=0,smsa=1,race=1)
+#predict confidence interval
+yh = predict(uswages_reg_trans_final,data,se.fit=TRUE, interval = "confidence",
+             level = 0.95)
+#taking the exp of the fit
+fit_yh = exp(c(yh$fit[,1]))
+#obtaining the lower limits
+lower <- exp(c(yh$fit[,2]))
+#obtaining the upper limits
+upper <- exp(c(yh$fit[,3]))
+print(fit_yh)
+print(lower)
+print(upper)
+```
+
+Our result is the same. Wage is predicted to be 644.5374 with 95% confidence interval of (584.5296,710.7056), which does not include zero, which means it is significant.
